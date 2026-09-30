@@ -1,0 +1,29 @@
+services:
+  alertas:
+    build: .
+    restart: unless-stopped
+    init: true
+    ports:
+      - "${PORT:-9012}:9012"
+    environment:
+      PORT: 9012
+      ADMIN_USER: ${ADMIN_USER:?Configura ADMIN_USER en .env}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?Configura ADMIN_PASSWORD en .env}
+      WEBHOOK_TOKEN: ${WEBHOOK_TOKEN:?Configura WEBHOOK_TOKEN en .env}
+    volumes:
+      - alertas_data:/app/data
+    shm_size: 256mb
+    stop_grace_period: 30s
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:9012/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      start_period: 120s
+      retries: 3
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+volumes:
+  alertas_data:

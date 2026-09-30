@@ -1,0 +1,153 @@
+<?xml version='1.0' encoding='utf-8'?>
+<zabbix_export>
+  <version>6.4</version>
+  <media_types>
+    <media_type>
+      <name>TVYMAS WhatsApp Alertas</name>
+      <type>WEBHOOK</type>
+      <parameters>
+        <parameter>
+          <name>event_date</name>
+          <value>{EVENT.DATE}</value>
+        </parameter>
+        <parameter>
+          <name>event_id</name>
+          <value>{EVENT.ID}</value>
+        </parameter>
+        <parameter>
+          <name>event_name</name>
+          <value>{EVENT.NAME}</value>
+        </parameter>
+        <parameter>
+          <name>event_nseverity</name>
+          <value>{EVENT.NSEVERITY}</value>
+        </parameter>
+        <parameter>
+          <name>event_opdata</name>
+          <value>{EVENT.OPDATA}</value>
+        </parameter>
+        <parameter>
+          <name>event_recovery_date</name>
+          <value>{EVENT.RECOVERY.DATE}</value>
+        </parameter>
+        <parameter>
+          <name>event_recovery_time</name>
+          <value>{EVENT.RECOVERY.TIME}</value>
+        </parameter>
+        <parameter>
+          <name>event_severity</name>
+          <value>{EVENT.SEVERITY}</value>
+        </parameter>
+        <parameter>
+          <name>event_source</name>
+          <value>{EVENT.SOURCE}</value>
+        </parameter>
+        <parameter>
+          <name>event_tags</name>
+          <value>{EVENT.TAGSJSON}</value>
+        </parameter>
+        <parameter>
+          <name>event_time</name>
+          <value>{EVENT.TIME}</value>
+        </parameter>
+        <parameter>
+          <name>event_update_date</name>
+          <value>{EVENT.UPDATE.DATE}</value>
+        </parameter>
+        <parameter>
+          <name>event_update_status</name>
+          <value>{EVENT.UPDATE.STATUS}</value>
+        </parameter>
+        <parameter>
+          <name>event_update_time</name>
+          <value>{EVENT.UPDATE.TIME}</value>
+        </parameter>
+        <parameter>
+          <name>event_value</name>
+          <value>{EVENT.VALUE}</value>
+        </parameter>
+        <parameter>
+          <name>host_conn</name>
+          <value>{HOST.NAME}</value>
+        </parameter>
+        <parameter>
+          <name>problem_status</name>
+          <value>{ALERT.MESSAGE}</value>
+        </parameter>
+        <parameter>
+          <name>trigger_description</name>
+          <value>{TRIGGER.DESCRIPTION}</value>
+        </parameter>
+        <parameter>
+          <name>trigger_id</name>
+          <value>{TRIGGER.ID}</value>
+        </parameter>
+        <parameter>
+          <name>tvymasurl</name>
+          <value>http://IP_DEL_SERVIDOR:9012/zabbix-webhook</value>
+        </parameter>
+        <parameter>
+          <name>webhook_token</name>
+          <value>CAMBIAR_POR_WEBHOOK_TOKEN</value>
+        </parameter>
+        <parameter>
+          <name>event_duration</name>
+          <value>{EVENT.DURATION}</value>
+        </parameter>
+        <parameter>
+          <name>event_recovery_id</name>
+          <value>{EVENT.RECOVERY.ID}</value>
+        </parameter>
+      </parameters>
+      <script>try {
+    var params = JSON.parse(value);
+    var payload = {};
+    var fields = ['event_date', 'event_id', 'event_nseverity', 'event_opdata',
+        'event_recovery_date', 'event_recovery_time', 'event_severity',
+        'event_source', 'event_tags', 'event_time', 'event_update_date',
+        'event_update_status', 'event_update_time', 'event_value', 'trigger_id',
+        'problem_status', 'event_duration', 'event_recovery_id'];
+    for (var i = 0; i &lt; fields.length; i++) {
+        payload[fields[i]] = params[fields[i]];
+    }
+    payload.Host = params.host_conn;
+    payload.Event = params.event_name;
+    payload.notification_type = params.problem_status === 'Resolved' ? 'recovery'
+        : String(params.event_update_status) === '1' ? 'update'
+        : String(params.event_value) === '0' ? 'recovery' : 'problem';
+    var request = new HttpRequest();
+    request.addHeader('Content-Type: application/json');
+    request.addHeader('Authorization: Bearer ' + params.webhook_token);
+    var response = request.post(params.tvymasurl, JSON.stringify(payload));
+    if (request.getStatus() !== 200) {
+        throw 'HTTP ' + request.getStatus() + ': ' + response;
+    }
+    return 'OK';
+} catch (err) {
+    Zabbix.log(3, 'Error webhook de alertas: ' + err);
+    throw 'Webhook error: ' + err;
+}
+</script>
+      <message_templates>
+        <message_template>
+          <event_source>TRIGGERS</event_source>
+          <operation_mode>PROBLEM</operation_mode>
+          <subject>Problem: {EVENT.NAME}</subject>
+          <message>Active</message>
+        </message_template>
+        <message_template>
+          <event_source>TRIGGERS</event_source>
+          <operation_mode>RECOVERY</operation_mode>
+          <subject>Resolved in {EVENT.DURATION}: {EVENT.NAME}</subject>
+          <message>Resolved</message>
+        </message_template>
+        <message_template>
+          <event_source>TRIGGERS</event_source>
+          <operation_mode>UPDATE</operation_mode>
+          <subject>Updated problem in {EVENT.AGE}: {EVENT.NAME}</subject>
+          <message>{USER.FULLNAME} {EVENT.UPDATE.ACTION} problem at {EVENT.UPDATE.DATE} {EVENT.UPDATE.TIME}. {EVENT.UPDATE.MESSAGE} Current problem status is {EVENT.STATUS}, age is {EVENT.AGE}, acknowledged: {EVENT.ACK.STATUS}.</message>
+        </message_template>
+      </message_templates>
+    </media_type>
+  </media_types>
+</zabbix_export>
