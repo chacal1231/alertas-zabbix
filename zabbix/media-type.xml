@@ -3,7 +3,7 @@
   <version>6.4</version>
   <media_types>
     <media_type>
-      <name>TVYMAS WhatsApp Alertas</name>
+      <name>WhatsApp Alertas</name>
       <type>WEBHOOK</type>
       <parameters>
         <parameter>

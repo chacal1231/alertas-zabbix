@@ -32,7 +32,7 @@ El panel funciona por HTTP, tal como se solicitó. La cookie de sesión es HttpO
 
 ## Configurar Zabbix 6.4
 
-1. Importa `zabbix/media-type.xml` como tipo de medio nuevo **TVYMAS WhatsApp Alertas**. Está basado en el XML original y limitado a eventos de triggers.
+1. Importa `zabbix/media-type.xml` como tipo de medio nuevo **WhatsApp Alertas**. Está basado en el XML original y limitado a eventos de triggers.
 2. Edita los parámetros del tipo de medio: `tvymasurl=http://IP_DEL_SERVIDOR:9012/zabbix-webhook` y `webhook_token` con el mismo valor de `.env`. Conserva las macros restantes, especialmente `event_id={EVENT.ID}`.
 3. Asigna este medio a un usuario Zabbix con permisos de lectura sobre los hosts; puedes usar `whatsapp` en Enviar a, ya que los grupos se eligen en el panel. Habilita horario y severidades adecuados.
 4. En la acción de triggers, configura una operación de problema y una **operación de recuperación** para enviar a ese usuario mediante este medio. Añade una operación de actualización si quieres notificar reconocimientos/comentarios. Usa los mensajes predeterminados: `Active` y `Resolved`.
