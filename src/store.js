@@ -22,11 +22,42 @@ export function normalize(p) {
   return { id, kind, host, name, severity, tags, key, p };
 }
 
+const severities = [
+  ['⚪', 'EVENTO SIN CLASIFICAR', 'No clasificada'],
+  ['🔵', 'INFORMACIÓN', 'Información'],
+  ['🟡', 'ADVERTENCIA', 'Advertencia'],
+  ['🟠', 'ALERTA DE PRIORIDAD MEDIA', 'Media'],
+  ['🔴', 'ALERTA DE PRIORIDAD ALTA', 'Alta'],
+  ['🚨', 'ALERTA CRÍTICA', 'Desastre']
+];
+function present(value) { return value != null && String(value).trim() !== ''; }
+function dateTime(date, time) {
+  const formatted = present(date) ? String(date).replace(/^(\d{4})[.-](\d{2})[.-](\d{2})$/, '$3/$2/$1') : '';
+  return [formatted, time].filter(present).join(' · ');
+}
 export function formatMessage(e) {
   const p = e.p;
-  const title = {problem:'🔴 PROBLEMA', recovery:'🟢 RECUPERADO', update:'📝 ACTUALIZACIÓN'}[e.kind];
-  const date = e.kind === 'recovery' ? [p.event_recovery_date, p.event_recovery_time] : e.kind === 'update' ? [p.event_update_date, p.event_update_time] : [p.event_date, p.event_time];
-  return [title, `Host: ${e.host}`, `Evento: ${e.name}`, `Severidad: ${p.event_severity ?? e.severity}`, `Problema ID: ${e.id}`, `Fecha: ${date.filter(Boolean).join(' ')}`, e.kind === 'recovery' && p.event_duration ? `Duración: ${p.event_duration}` : '', e.kind === 'update' ? String(p.problem_status ?? '') : String(p.event_opdata ?? '')].filter(Boolean).join('\n').slice(0, 6000);
+  const [icon, heading, severity] = severities[e.severity];
+  const title = e.kind === 'recovery' ? '✅ *PROBLEMA RECUPERADO*'
+    : e.kind === 'update' ? `📝 *ACTUALIZACIÓN · ${severity.toUpperCase()}*`
+    : `${icon} *${heading}*`;
+  const details = [];
+  const field = (label, value) => { if (present(value)) details.push(`*${label}:* ${value}`); };
+  if (e.kind === 'recovery') {
+    field('Severidad original', severities[e.originalSeverity ?? e.severity][2]);
+    field('Duración', p.event_duration);
+    field('Recuperación', dateTime(p.event_recovery_date, p.event_recovery_time));
+  } else if (e.kind === 'update') {
+    field('Actualización', p.problem_status);
+    field('Fecha', dateTime(p.event_update_date, p.event_update_time));
+  } else {
+    field('Detalle', p.event_opdata);
+    field('Inicio', dateTime(p.event_date, p.event_time));
+  }
+  const sections = [title, `*Equipo:* ${e.host}\n*Evento:* ${e.name}`];
+  if (details.length) sections.push(details.join('\n'));
+  const reference = `\n\nReferencia: #${e.id}`;
+  return sections.join('\n\n').slice(0, Math.max(0, 6000-reference.length)) + reference;
 }
 
 export class Store {
@@ -62,7 +93,7 @@ export class Store {
       this.db.prepare('INSERT INTO events VALUES (?,?,?,?,?)').run(e.key,e.id,e.kind,JSON.stringify(p),now);
       // A delayed problem cannot reopen an already recovered incident or produce a stale alert.
       const send = !(old?.status === 'recovered' && e.kind === 'problem') && (e.kind !== 'update' || c.updates);
-      if (send) for (const destination of destinations) this.db.prepare('INSERT INTO jobs(event_key,incident,destination,message) VALUES (?,?,?,?)').run(e.key,e.id,destination,formatMessage(e));
+      if (send) for (const destination of destinations) this.db.prepare('INSERT INTO jobs(event_key,incident,destination,message) VALUES (?,?,?,?)').run(e.key,e.id,destination,formatMessage({...e,originalSeverity:old?.severity ?? e.severity}));
       this.db.exec('COMMIT');
       return {duplicate:false, status:recovered?'recovered':'active', queued:send?destinations.length:0};
     } catch (err) { this.db.exec('ROLLBACK'); throw err; }
