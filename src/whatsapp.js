@@ -20,6 +20,21 @@ export class WhatsApp {
     finally { this.starting=false; }
   }
   async state() { return {status:this.status,qr:this.qr?await QRCode.toDataURL(this.qr):null}; }
-  async groups() { if(this.status!=='ready') throw new Error('WhatsApp no está conectado'); return (await this.client.getChats()).filter(c=>c.isGroup).map(c=>({id:c.id._serialized,name:c.name})); }
+  async groups() {
+    if(this.status!=='ready') throw new Error('WhatsApp no está conectado. Vincula la cuenta antes de guardar los grupos.');
+    try {
+      // Leer únicamente nombres e IDs: getChats serializa también contactos y
+      // participantes, que pueden fallar aunque el grupo esté disponible.
+      return await this.client.pupPage.evaluate(() => {
+        const chats = window.require('WAWebCollections').Chat.getModelsArray();
+        return chats.filter(c => c.id?._serialized?.endsWith('@g.us')).map(c => ({
+          id:c.id._serialized, name:String(c.name || c.formattedTitle || c.groupMetadata?.subject || '')
+        }));
+      });
+    } catch(error) {
+      console.error('Consulta de nombres de grupos:', error?.message || String(error));
+      throw new Error('No se pudieron consultar los nombres de WhatsApp. Espera a que termine de sincronizar o reconecta la cuenta.');
+    }
+  }
   async send(destination,message) { if(this.status!=='ready') throw new Error('WhatsApp no está conectado'); await this.client.sendMessage(destination,message,{sendSeen:false}); }
 }

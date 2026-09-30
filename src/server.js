@@ -3,6 +3,7 @@ import { randomBytes, scryptSync, timingSafeEqual } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { Store, normalize } from './store.js';
+import { validateGroupNames, resolveGroupNames } from './group-names.js';
 
 const { ADMIN_USER, ADMIN_PASSWORD, WEBHOOK_TOKEN }=process.env;
 if(!ADMIN_USER || !ADMIN_PASSWORD || ADMIN_PASSWORD.length<12 || !WEBHOOK_TOKEN || WEBHOOK_TOKEN.length<24) throw new Error('Configura ADMIN_USER, ADMIN_PASSWORD (12+ caracteres) y WEBHOOK_TOKEN (24+ caracteres)');
@@ -47,9 +48,29 @@ app.get('/api/session',(req,res)=>res.json({csrf:req.session.csrf}));
 app.post('/api/logout',(req,res)=>{sessions.delete(req.session.token);res.clearCookie(cookie,{path:'/'}).json({ok:true});});
 app.get('/api/status',async(req,res)=>res.json(await wa.state()));
 app.post('/api/reconnect',(req,res)=>{void wa.start();res.json({ok:true});});
-app.get('/api/groups',async(req,res)=>{try{res.json(await wa.groups());}catch(e){res.status(409).json({error:e.message});}});
+
 app.get('/api/config',(req,res)=>res.json(store.config()));
-app.put('/api/config',(req,res)=>{try{store.saveConfig(req.body);res.json({ok:true});}catch(e){res.status(400).json({error:e.message});}});
+app.put('/api/config',async(req,res)=>{
+  try {
+    let config=req.body;
+    if(Object.hasOwn(config || {},'groupNames')) {
+      const names=validateGroupNames(config.groupNames);
+      const previous=store.config();
+      const previousNames=previous.groupNames || previous.groups;
+      if(JSON.stringify(names)===JSON.stringify(previousNames)) {
+        config={...config,groups:previous.groups,groupNames:previousNames};
+      } else {
+        const resolved=names.length?resolveGroupNames(names,await wa.groups()):[];
+        config={...config,groups:[...new Set(resolved.map(g=>g.id))],groupNames:[...new Map(resolved.map(g=>[g.id,g.name])).values()]};
+      }
+    } else {
+      // Compatibilidad con clientes anteriores que envían IDs directamente.
+      config={...config,groupNames:config?.groups};
+    }
+    store.saveConfig(config);
+    res.json({ok:true,groupNames:config.groupNames});
+  }catch(e){res.status(400).json({error:e.message || 'No se pudieron guardar los grupos.'});}
+});
 app.get('/api/history',(req,res)=>res.json(store.snapshot()));
 app.post('/api/jobs/:id/retry',(req,res)=>{try{store.retry(Number(req.params.id));res.json({ok:true});}catch(e){res.status(409).json({error:e.message});}});
 app.use(express.static(resolve('public')));

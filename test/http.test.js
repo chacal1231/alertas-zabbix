@@ -22,7 +22,10 @@ test('HTTP: login, CSRF, token, persistencia y recuperación',async()=>{
  assert.match(login.headers.get('set-cookie'),/HttpOnly/);assert.match(login.headers.get('set-cookie'),/SameSite=Strict/);assert.doesNotMatch(login.headers.get('set-cookie'),/; Secure/);
  const headers={'Content-Type':'application/json',Cookie:cookie,'X-CSRF-Token':csrf};
  assert.equal((await fetch(base+'/api/config',{method:'PUT',headers:{'Content-Type':'application/json',Cookie:cookie},body:'{}'})).status,403);
- assert.equal((await fetch(base+'/api/config',{method:'PUT',headers,body:JSON.stringify({groups:['123456@g.us'],minSeverity:0,hostContains:'',tag:'',updates:true})})).status,200);
+ assert.equal((await fetch(base+'/api/config',{method:'PUT',headers,body:JSON.stringify({groupNames:['Grupo de prueba'],minSeverity:0,hostContains:'',tag:'',updates:true})})).status,200);
+ const saved=await (await fetch(base+'/api/config',{headers})).json();assert.deepEqual(saved.groups,['123456@g.us']);assert.deepEqual(saved.groupNames,['Grupo de prueba']);
+ const bad=await fetch(base+'/api/config',{method:'PUT',headers,body:JSON.stringify({...saved,groupNames:['No existe']})});assert.equal(bad.status,400);
+ const unchanged=await (await fetch(base+'/api/config',{headers})).json();assert.deepEqual(unchanged.groups,['123456@g.us']);
  const p={event_id:'999',event_source:'0',event_value:'1',Host:'Router',Event:'Caído',event_nseverity:'4',problem_status:'Active'};
  const webhook=async body=>fetch(base+'/zabbix-webhook',{method:'POST',headers:{'Content-Type':'application/json',Authorization:`Bearer ${env.WEBHOOK_TOKEN}`},body:JSON.stringify(body)});
  assert.equal((await webhook(p)).status,200);assert.equal((await (await webhook(p)).json()).duplicate,true);

@@ -26,7 +26,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-Abre `http://IP_DEL_SERVIDOR:9012`, inicia sesión con las credenciales de `.env`, escanea el QR desde Dispositivos vinculados en WhatsApp, carga los grupos, selecciona los destinos y guarda. El número debe pertenecer a los grupos y poder enviar mensajes. No se envían alertas hasta configurar destinos. Los filtros se combinan: severidad mínima, texto del host y etiqueta exacta `clave=valor`.
+Abre `http://IP_DEL_SERVIDOR:9012`, inicia sesión con las credenciales de `.env`, escanea el QR desde Dispositivos vinculados en WhatsApp, escribe el nombre exacto de cada grupo (uno por línea) y guarda. El número debe pertenecer a los grupos y poder enviar mensajes. No se envían alertas hasta configurar destinos. Los filtros se combinan: severidad mínima, texto del host y etiqueta exacta `clave=valor`.
 
 El panel funciona por HTTP, tal como se solicitó. La cookie de sesión es HttpOnly y SameSite=Strict, compatible con HTTP. Hay protección CSRF y límite de intentos de login. La sesión caduca a las ocho horas y se invalida al reiniciar el servicio. Credenciales y token se configuran solo en `.env`.
 
@@ -88,3 +88,9 @@ Las siete pruebas automatizadas pasan: login y restricciones de acceso, CSRF, to
 Pendiente en un servidor de despliegue: construir la imagen Docker, importar el XML en Zabbix y verificar QR/envío real con una cuenta vinculada. El entorno de desarrollo no tiene Docker ni Chromium instalados.
 
 La auditoría de dependencias reporta cinco entradas de severidad alta en la cadena whatsapp-web.js → Puppeteer → extract-zip, por extracción de archivos ZIP. La imagen desactiva las descargas de navegadores de Puppeteer y utiliza Chromium del sistema; esto evita esa ruta de descarga durante su instalación normal, pero no elimina el aviso de dependencia. Se conserva la versión de Puppeteer requerida por whatsapp-web.js para no introducir una actualización mayor sin verificar la vinculación real.
+
+## Bloqueo de Chromium al recrear el contenedor
+
+El arranque adquiere un bloqueo exclusivo del volumen y retira únicamente los enlaces `SingletonLock`, `SingletonSocket` y `SingletonCookie` que dejó el contenedor anterior. Conserva las credenciales y el perfil. Otra instancia con este mismo arranque no puede abrir simultáneamente el volumen. No ejecutes un cliente externo con ese perfil.
+
+Los nombres se resuelven al guardar mediante una consulta mínima de los chats, sin cargar participantes. Si hay dos grupos con el mismo nombre, debes diferenciarlos en WhatsApp. Se conserva el ID como destino para soportar cambios posteriores del nombre y enviar las recuperaciones al grupo original.
