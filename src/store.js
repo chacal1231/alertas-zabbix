@@ -17,7 +17,7 @@ export function normalize(p) {
   let tags = p.event_tags ?? [];
   if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch { tags = []; } }
   if (!Array.isArray(tags)) tags = [];
-  const revision = kind === 'update' ? [p.event_update_date, p.event_update_time, p.problem_status] : [kind];
+  const revision = kind === 'update' ? [p.event_update_date, p.event_update_time, p.problem_status, severity] : [kind];
   const key = createHash('sha256').update(JSON.stringify([id, kind, revision])).digest('hex');
   return { id, kind, host, name, severity, tags, key, p };
 }
@@ -71,13 +71,43 @@ export class Store {
       CREATE TABLE IF NOT EXISTS jobs (id INTEGER PRIMARY KEY, event_key TEXT, incident TEXT, destination TEXT, message TEXT, status TEXT DEFAULT 'pending', attempts INTEGER DEFAULT 0, next_at INTEGER DEFAULT 0, error TEXT, sent_at TEXT, UNIQUE(event_key,destination));
       CREATE INDEX IF NOT EXISTS jobs_pending ON jobs(status,next_at);
       CREATE INDEX IF NOT EXISTS jobs_incident ON jobs(incident,destination,id);`);
+    if(!this.db.prepare('PRAGMA table_info(jobs)').all().some(c=>c.name==='kind')) this.db.exec("ALTER TABLE jobs ADD COLUMN kind TEXT NOT NULL DEFAULT 'notification'");
+    this.db.exec(`CREATE TABLE IF NOT EXISTS reminders (
+      incident TEXT NOT NULL, destination TEXT NOT NULL, due INTEGER NOT NULL,
+      since INTEGER NOT NULL, PRIMARY KEY(incident,destination));
+      CREATE INDEX IF NOT EXISTS reminders_due ON reminders(due);`);
+    // Migrar incidentes activos existentes usando el último evento recibido.
+    if(!this.db.prepare("SELECT name FROM sqlite_master WHERE name='reminder_migration'").get()) {
+      this.db.exec('BEGIN IMMEDIATE');
+      try {
+        const rows=this.db.prepare("SELECT i.*, (SELECT payload FROM events e WHERE e.incident=i.id ORDER BY e.rowid DESC LIMIT 1) AS latest, (SELECT MIN(received) FROM events e WHERE e.incident=i.id) AS first_received FROM incidents i WHERE status='active'").all();
+        for(const row of rows) {
+          const latest=row.latest?JSON.parse(row.latest):{};
+          if(Number(latest.event_nseverity ?? row.severity)!==5)continue;
+          for(const dest of JSON.parse(row.destinations)) this.db.prepare('INSERT OR IGNORE INTO reminders VALUES (?,?,?,?)').run(row.id,dest,Date.now()+this.config().reminderMinutes*60000,Date.parse(row.first_received)||Date.now());
+        }
+        this.db.exec('CREATE TABLE reminder_migration (version INTEGER); COMMIT');
+      }catch(error){this.db.exec('ROLLBACK');throw error;}
+    }
   }
-  config() { return JSON.parse(this.db.prepare('SELECT json FROM config WHERE id=1').get().json); }
+    
+  config() { return {remindersEnabled:true,reminderMinutes:1,...JSON.parse(this.db.prepare('SELECT json FROM config WHERE id=1').get().json)}; }
   saveConfig(c) {
+    const previous=this.config();
+    c={...c,remindersEnabled:c.remindersEnabled ?? previous.remindersEnabled,reminderMinutes:c.reminderMinutes ?? previous.reminderMinutes};
+    if(typeof c.remindersEnabled!=='boolean' || !Number.isInteger(c.reminderMinutes) || c.reminderMinutes<1 || c.reminderMinutes>1440) throw new Error('El intervalo de recordatorios debe ser de 1 a 1440 minutos.');
     if (!Array.isArray(c.groups) || c.groups.length > 100 || c.groups.some(g => typeof g !== 'string' || !/^[\d-]+@g\.us$/.test(g))) throw new Error('Grupos inválidos');
     if (!Number.isInteger(c.minSeverity) || c.minSeverity < 0 || c.minSeverity > 5) throw new Error('Severidad inválida');
     if (typeof c.hostContains !== 'string' || c.hostContains.length > 200 || typeof c.tag !== 'string' || c.tag.length > 200 || typeof c.updates !== 'boolean') throw new Error('Filtros inválidos');
-    this.db.prepare('UPDATE config SET json=? WHERE id=1').run(JSON.stringify({...c, groups:[...new Set(c.groups)]}));
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      this.db.prepare('UPDATE config SET json=? WHERE id=1').run(JSON.stringify({...c, groups:[...new Set(c.groups)]}));
+      if(c.remindersEnabled!==previous.remindersEnabled || c.reminderMinutes!==previous.reminderMinutes) {
+        this.db.prepare("UPDATE jobs SET status='cancelled' WHERE kind='reminder' AND status IN ('pending','failed')").run();
+        this.db.prepare('UPDATE reminders SET due=?').run(Date.now()+c.reminderMinutes*60000);
+      }
+      this.db.exec('COMMIT');
+    } catch(error) {this.db.exec('ROLLBACK');throw error;}
   }
   accept(p) {
     const e = normalize(p), now = new Date().toISOString();
@@ -91,6 +121,13 @@ export class Store {
       const recovered = old?.status === 'recovered' || e.kind === 'recovery';
       this.db.prepare(`INSERT INTO incidents VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status, recovered=COALESCE(incidents.recovered,excluded.recovered), updated=excluded.updated`).run(e.id,e.host,e.name,e.severity,recovered?'recovered':'active',JSON.stringify(destinations),`${p.event_date ?? ''} ${p.event_time ?? ''}`.trim(),e.kind==='recovery'?`${p.event_recovery_date ?? ''} ${p.event_recovery_time ?? ''}`.trim() || now:null,now);
       this.db.prepare('INSERT INTO events VALUES (?,?,?,?,?)').run(e.key,e.id,e.kind,JSON.stringify(p),now);
+      if(recovered || e.severity!==5) {
+        this.db.prepare('DELETE FROM reminders WHERE incident=?').run(e.id);
+        this.db.prepare("UPDATE jobs SET status='cancelled' WHERE incident=? AND kind='reminder' AND status IN ('pending','failed')").run(e.id);
+      } else {
+        const first=this.db.prepare('SELECT MIN(received) AS received FROM events WHERE incident=?').get(e.id);
+        for(const dest of destinations) this.db.prepare('INSERT OR IGNORE INTO reminders VALUES (?,?,?,?)').run(e.id,dest,Date.now()+c.reminderMinutes*60000,Date.parse(first.received));
+      }
       // A delayed problem cannot reopen an already recovered incident or produce a stale alert.
       const send = !(old?.status === 'recovered' && e.kind === 'problem') && (e.kind !== 'update' || c.updates);
       if (send) for (const destination of destinations) this.db.prepare('INSERT INTO jobs(event_key,incident,destination,message) VALUES (?,?,?,?)').run(e.key,e.id,destination,formatMessage({...e,originalSeverity:old?.severity ?? e.severity}));
@@ -98,14 +135,45 @@ export class Store {
       return {duplicate:false, status:recovered?'recovered':'active', queued:send?destinations.length:0};
     } catch (err) { this.db.exec('ROLLBACK'); throw err; }
   }
-  nextJob() {
-    return this.db.prepare(`SELECT j.* FROM jobs j WHERE j.status='pending' AND j.next_at<=? AND NOT EXISTS (SELECT 1 FROM jobs earlier WHERE earlier.incident=j.incident AND earlier.destination=j.destination AND earlier.id<j.id AND earlier.status='pending') ORDER BY j.id LIMIT 1`).get(Date.now());
+  enqueueReminders(now=Date.now()) {
+    const c=this.config();
+    if(!c.remindersEnabled)return;
+    this.db.exec('BEGIN IMMEDIATE');
+    try {
+      const due=this.db.prepare(`SELECT r.*,i.host,i.name FROM reminders r JOIN incidents i ON i.id=r.incident
+        WHERE r.due<=? AND i.status='active' AND NOT EXISTS
+        (SELECT 1 FROM jobs j WHERE j.incident=r.incident AND j.destination=r.destination AND j.status='pending')`).all(now);
+      for(const r of due) {
+        const minutes=Math.max(0,Math.floor((now-r.since)/60000));
+        const message=`🚨 *RECORDATORIO · ALERTA CRÍTICA*\n\n*Equipo:* ${r.host}\n*Evento:* ${r.name}\n\n*Tiempo de seguimiento:* ${minutes} minutos\n*Estado:* Sin recuperación registrada\n\nReferencia: #${r.incident}`;
+        this.db.prepare("UPDATE jobs SET status='cancelled' WHERE incident=? AND destination=? AND kind='reminder' AND status='failed'").run(r.incident,r.destination);
+        this.db.prepare("INSERT INTO jobs(event_key,incident,destination,message,kind) VALUES (?,?,?,?,'reminder')").run(`reminder:${r.incident}:${now}`,r.incident,r.destination,message);
+        this.db.prepare('UPDATE reminders SET due=? WHERE incident=? AND destination=?').run(now+c.reminderMinutes*60000,r.incident,r.destination);
+      }
+      this.db.exec('COMMIT');
+    }catch(error){this.db.exec('ROLLBACK');throw error;}
   }
-  sent(id) { this.db.prepare("UPDATE jobs SET status='sent',sent_at=?,error=NULL WHERE id=?").run(new Date().toISOString(),id); }
-  failed(job, error) { const attempts=job.attempts+1; this.db.prepare('UPDATE jobs SET attempts=?,status=?,next_at=?,error=? WHERE id=?').run(attempts, attempts>=5?'failed':'pending',Date.now()+Math.min(300000,5000*2**attempts),String(error).slice(0,500),job.id); }
+  nextJob() {
+    const job=this.db.prepare(`SELECT j.* FROM jobs j WHERE j.status='pending' AND j.next_at<=? AND NOT EXISTS (SELECT 1 FROM jobs earlier WHERE earlier.incident=j.incident AND earlier.destination=j.destination AND earlier.id<j.id AND earlier.status='pending') ORDER BY CASE WHEN j.kind='reminder' THEN 1 ELSE 0 END,j.id LIMIT 1`).get(Date.now());
+    if(job?.kind==='reminder') {
+      const r=this.db.prepare('SELECT since FROM reminders WHERE incident=? AND destination=?').get(job.incident,job.destination);
+      if(r) {
+        job.message=job.message.replace(/\*Tiempo de seguimiento:\* \d+ minutos/,`*Tiempo de seguimiento:* ${Math.max(0,Math.floor((Date.now()-r.since)/60000))} minutos`);
+        this.db.prepare('UPDATE jobs SET message=? WHERE id=?').run(job.message,job.id);
+      }
+    }
+    return job;
+  }
+  sent(id) {
+    this.db.prepare("UPDATE jobs SET status='sent',sent_at=?,error=NULL WHERE id=? AND status='pending'").run(new Date().toISOString(),id);
+    const job=this.db.prepare('SELECT * FROM jobs WHERE id=?').get(id);
+    if(job && (job.kind==='reminder' || this.db.prepare('SELECT kind FROM events WHERE key=?').get(job.event_key)?.kind==='problem')) this.db.prepare('UPDATE reminders SET due=? WHERE incident=? AND destination=?').run(Date.now()+this.config().reminderMinutes*60000,job.incident,job.destination);
+  }
+  failed(job, error) { const attempts=job.attempts+1; this.db.prepare("UPDATE jobs SET attempts=?,status=?,next_at=?,error=? WHERE id=? AND status='pending'").run(attempts, attempts>=5?'failed':'pending',Date.now()+Math.min(300000,5000*2**attempts),String(error).slice(0,500),job.id); }
   retry(id) {
     const j=this.db.prepare("SELECT * FROM jobs WHERE id=? AND status='failed'").get(id);
     if (!j) throw new Error('Envío no encontrado');
+    if(j.kind==='reminder')throw new Error('Los recordatorios se reprograman automáticamente mientras el problema siga activo.');
     if(this.db.prepare("SELECT id FROM jobs WHERE incident=? AND destination=? AND id>? AND status='sent'").get(j.incident,j.destination,j.id)) throw new Error('No se puede reenviar un estado anterior a uno ya enviado');
     this.db.prepare("UPDATE jobs SET status='pending',attempts=0,next_at=0,error=NULL WHERE id=?").run(id);
   }

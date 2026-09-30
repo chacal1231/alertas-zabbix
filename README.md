@@ -38,7 +38,7 @@ El panel funciona por HTTP, tal como se solicitó. La cookie de sesión es HttpO
 4. En la acción de triggers, configura una operación de problema y una **operación de recuperación** para enviar a ese usuario mediante este medio. Añade una operación de actualización si quieres notificar reconocimientos/comentarios. Usa los mensajes predeterminados: `Active` y `Resolved`.
 5. Provoca un problema de prueba y después recupéralo. Verifica que el mismo ID pasa de Activo a Recuperado en el panel y que se reciben ambos mensajes.
 
-El servicio hace seguimiento mediante los webhooks: **no consulta periódicamente la API de Zabbix ni detecta por sí solo una recuperación**. Sin una operación de recuperación en Zabbix, el incidente permanecerá activo. No hay recordatorios periódicos automáticos.
+El servicio hace seguimiento mediante los webhooks: **no consulta periódicamente la API de Zabbix ni detecta por sí solo una recuperación**. Sin una operación de recuperación en Zabbix, el incidente permanecerá activo. Los recordatorios de Desastre se configuran desde el panel.
 
 `zabbix/webhook.js` contiene el script legible, que ya está integrado en el XML. Corrige los comentarios de una sola línea del original y establece las cabeceras mediante `addHeader`. El receptor requiere `Authorization: Bearer TOKEN` y devuelve HTTP 200 después de guardar el evento y los trabajos de envío en una transacción, aunque WhatsApp esté desconectado. Un 200 confirma recepción durable, no entrega por WhatsApp.
 
@@ -94,3 +94,13 @@ La auditoría de dependencias reporta cinco entradas de severidad alta en la cad
 El arranque adquiere un bloqueo exclusivo del volumen y retira únicamente los enlaces `SingletonLock`, `SingletonSocket` y `SingletonCookie` que dejó el contenedor anterior. Conserva las credenciales y el perfil. Otra instancia con este mismo arranque no puede abrir simultáneamente el volumen. No ejecutes un cliente externo con ese perfil.
 
 Los nombres se resuelven al guardar mediante una consulta mínima de los chats, sin cargar participantes. Si hay dos grupos con el mismo nombre, debes diferenciarlos en WhatsApp. Se conserva el ID como destino para soportar cambios posteriores del nombre y enviar las recuperaciones al grupo original.
+
+## Recordatorios de Desastre
+
+En **Destinos y filtros → Recordatorios de Desastre** puedes activar/desactivar los avisos y elegir un intervalo entero entre 1 y 1440 minutos. Por defecto están habilitados cada minuto. Los cambios de intervalo o activación se aplican también a incidentes activos; el siguiente aviso se programa desde el momento de guardar.
+
+Se conserva la programación en SQLite y los destinos originales de cada incidente. Solo se repiten incidentes activos con severidad 5. Reconocer un problema no detiene los recordatorios. Una recuperación o una actualización con severidad inferior cancela los recordatorios pendientes; subir a Desastre vuelve a programarlos. Zabbix debe enviar las operaciones de actualización y recuperación para que estos cambios se conozcan.
+
+El programador actúa cuando WhatsApp está conectado. Mantiene como máximo un recordatorio pendiente por incidente y grupo, sin reproducir los minutos perdidos. El intervalo se cuenta desde el último recordatorio enviado (o desde la alerta inicial); la cola puede retrasar el envío según la carga. El tiempo de seguimiento del mensaje se cuenta desde la primera notificación recibida por esta aplicación, sin asumir la zona horaria de Zabbix.
+
+La migración de la base es automática e incluye incidentes activos existentes. El historial identifica los recordatorios cancelados. Un mensaje que ya se esté enviando a WhatsApp cuando llega la recuperación no puede retirarse; los que continúen en cola sí se cancelan. Los envíos normales de recuperación mantienen sus reintentos.

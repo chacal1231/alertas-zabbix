@@ -12,3 +12,5 @@ label{display:block;margin:18px 0;color:#294865;font-size:12px;font-weight:500}i
 textarea{display:block;width:100%;margin-top:9px;padding:11px 12px;min-height:90px;resize:vertical;font:inherit;line-height:1.6;color:var(--navy);background:#f7faff;border:1px solid #cddced;border-radius:5px}textarea:focus{outline:none;border-color:#699acf;box-shadow:0 0 0 3px #dceaf9}textarea::placeholder{color:#8798aa}.field-help{font-size:12px;margin-top:-7px;margin-bottom:22px}
 
 .login-layout{grid-template-columns:1fr}.login-access{min-height:100svh}.login-wordmark{font-size:23px;letter-spacing:0;margin-bottom:30px}.form-footer{justify-content:flex-end}.connection-content>.secondary{margin-top:20px}
+
+.reminder-settings{border:1px solid var(--line);border-radius:5px;margin:24px 0 0;padding:4px 16px 8px}.reminder-settings legend{font-weight:600;font-size:13px;padding:0 6px}.badge-cancelled{background:#f0f2f5;color:#61768c}

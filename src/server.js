@@ -76,7 +76,21 @@ app.post('/api/jobs/:id/retry',(req,res)=>{try{store.retry(Number(req.params.id)
 app.use(express.static(resolve('public')));
 app.use((err,req,res,next)=>{console.error(err.message);res.status(err.status||500).json({error:err.status===413?'Petición demasiado grande':err.status===400?'JSON inválido':'Error interno'});});
 let busy=false;
-const worker=setInterval(async()=>{if(busy||wa.status!=='ready')return;const job=store.nextJob();if(!job)return;busy=true;try{await wa.send(job.destination,job.message);store.sent(job.id);}catch(e){store.failed(job,e.message);}finally{busy=false;}},2000);
+const worker=setInterval(async()=>{
+  if(busy||wa.status!=='ready')return;
+  busy=true;
+  let job;
+  try {
+    store.enqueueReminders();
+    job=store.nextJob();
+    if(!job)return;
+    await wa.send(job.destination,job.message);
+    store.sent(job.id);
+  }catch(e){
+    if(job)store.failed(job,e.message);
+    else console.error('Cola de envíos:',e.message);
+  }finally{busy=false;}
+},2000);
 const reconnect=setInterval(()=>{if(['error','disconnected'].includes(wa.status))void wa.start();},60000);
 const server=app.listen(Number(process.env.PORT||9012),'0.0.0.0',()=>console.log('Panel HTTP y webhook listos'));
 void wa.start();
